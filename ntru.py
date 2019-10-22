@@ -27,68 +27,17 @@ import sys
 import math
 import os
 from sympy.polys.polyerrors import NotInvertible
-from collections import namedtuple
 
 debug = False
 verbose = False
 
-class NTRU(NamedTuple):
-    N: int
-    p: int
-    q: int
+class NTRU:
 
-    def R(self):
-        return Poly(x**self.N - 1, x).st_domain(ZZ)
-
-def decrypt_method(cipher, f, f_p, q, p, R):
-    """ Decrypts the message with the private key f """
-    a_poly = ((f * cipher) % R).trunc(q)
-    return ((f_p * a_poly) % R).trunc(p)
-
-
-def generate_random_keys(N, p, q):
-    """ Randomly generates the public and privates keys. Returns Numpy arrays"""
-    R = Poly(x ** N - 1, x).set_domain(ZZ)
-    g = random_poly(N, int(math.sqrt(N)))
-    for i in range(10):
-        f = random_poly(N, N // 3, neg_ones_diff=-1)
-        try:
-            f_p = invert_poly(f, R, p)
-            f_q = invert_poly(f, R, q)
-            break
-        except NotInvertible as ex:
-            pass
-    h = ((p * f_q * g) % R).trunc(q)
-    return asArr(h,N), asArr(f,N), asArr(f_p,N), asArr(g,N)
-
-
-def generate_keys(N, p, q, priv_key_file, pub_key_file):
-    """ Generates the public and private keys """
-    # Generate the keys and convert them to numpy array form
-    h, f, f_p, g = generate_random_keys(N, p, q)
-    # Store the results in a file
-    np.savez_compressed(priv_key_file, N=N, p=p, q=q, f=f, f_p=f_p, g=g)
-    np.savez_compressed(pub_key_file, N=N, p=p, q=q, h=h)
-
-
-def encrypt(pub_key_file, msg):
-    """ Encrypt the message using the public key """
-    # Load the NTRU system
-    pub_key = np.load(pub_key_file, allow_pickle=True)
-    N,p,q = int(pub_key['N']), int(pub_key['p']), int(pub_key['q'])
-    R = Poly(x ** N - 1, x).set_domain(ZZ)
-    h = asPoly(pub_key['h'].astype(np.int))
-
-    # Pad the message and break up into blocks
-    msg = padding_encode(msg, N).reshape((-1, N))
-    def encrypt_method(msg_poly):
-        """ Encrypts the message with the public key """
-        blinding_poly = random_poly(N, int(math.sqrt(q)))
-        return (((blinding_poly * h) + msg_poly) % R).trunc(q)
-    output = np.concatenate([asArr(encrypt_method(asPoly(b)),N) for b in msg])
-
-    output = [[0 if c == '0' else 1 for c in np.binary_repr(n, width=int(math.log2(q)))] for n in output]
-    return np.array(output).flatten()
+    def __init__(self, N, p, q):
+        self.N = N
+        self.p = p
+        self.q = q
+        self.R = Poly(x**N - 1, x).set_domain(ZZ)
 
 
 def asPoly(arr):
@@ -100,28 +49,79 @@ def asArr(poly, N):
     return np.pad(tmp, (0, N - len(tmp)))
 
 
+
+def generate_keys(ntru, priv_key_file, pub_key_file):
+    """ Generates the public and private keys """
+    # Generate the keys and convert them to numpy array form
+    N = ntru.N
+    g = random_poly(N, int(math.sqrt(N)))
+    for i in range(10):
+        f = random_poly(N, N // 3, neg_ones_diff=-1)
+        try:
+            f_p = invert_poly(f, ntru.R, ntru.p)
+            f_q = invert_poly(f, ntru.R, ntru.q)
+            break
+        except NotInvertible as ex:
+            pass
+    h = ((ntru.p * f_q * g) % ntru.R).trunc(ntru.q)
+
+    h, f, f_p, g = asArr(h,N), asArr(f,N), asArr(f_p,N), asArr(g,N)
+
+    # Store the results in a file
+    np.savez_compressed(priv_key_file, N=ntru.N, p=ntru.p, q=ntru.q, f=f, f_p=f_p, g=g)
+    np.savez_compressed(pub_key_file, N=ntru.N, p=ntru.p, q=ntru.q, h=h)
+
+
+def encrypt(pub_key_file, msg):
+    """ Encrypt the message using the public key """
+    # Load the NTRU system
+    ntru, h = load_NTRU(pub_key_file, isPriv=False)
+
+    # Pad the message and break up into blocks
+    msg = padding_encode(msg, ntru.N).reshape((-1, ntru.N))
+    def encrypt_method(msg_poly):
+        """ Encrypts the message with the public key """
+        blinding_poly = random_poly(ntru.N, int(math.sqrt(ntru.q)))
+        return (((blinding_poly * h) + msg_poly) % ntru.R).trunc(ntru.q)
+    output = np.concatenate([asArr(encrypt_method(asPoly(b)),ntru.N) for b in msg])
+
+    output = [[0 if c == '0' else 1 for c in np.binary_repr(n,
+                                                            width=int(math.log2(ntru.q)))] for n in output]
+    return np.array(output).flatten()
+
+
+
+def load_NTRU(fileName, isPriv):
+    """ Loads the NTRU system for the Private and Public domains """
+    param_file = np.load(fileName, allow_pickle=True)
+    ntru = NTRU(*[int(param_file[i]) for i in ['N', 'p', 'q']])
+    if isPriv: # Private domain, used for decryption
+        f = asPoly(param_file['f'].astype(np.int))
+        f_p = asPoly(param_file['f_p'].astype(np.int))
+        return ntru, f, f_p
+    else: # Public domain, used for encryption
+        h = asPoly(param_file['h'].astype(np.int))
+        return ntru, h
+
 def decrypt(priv_key_file, cipher):
-    """ Decrypt the message """
-    priv_key = np.load(priv_key_file, allow_pickle=True)
-    N,p,q = int(priv_key['N']), int(priv_key['p']), int(priv_key['q'])
-    f = asPoly(priv_key['f'].astype(np.int))
-    f_p = asPoly(priv_key['f_p'].astype(np.int))
-    R = Poly(x ** N - 1, x).set_domain(ZZ)
+    """ Decrypts the ciphertext """
 
-    #return please_work(cipher, f, f_p, q, p, R, N)
+    ntru, f, f_p = load_NTRU(priv_key_file, isPriv=True)
 
-    k = int(math.log2(q))
+    k = int(math.log2(ntru.q))
     pad = 0 if (len(cipher) % k) == 0 else k - (len(cipher) % k)
     cipher = np.array([int("".join(n.astype(str)), 2) for n in
                           np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
-    cipher = cipher.reshape((-1, N))
-    output = np.array([])
-    for b in cipher:
-        next_output = decrypt_method(asPoly(b), f, f_p, q, p, R).all_coeffs()[::-1]
-        if len(next_output) < N:
-            next_output = np.pad(next_output, (0, N - len(next_output)), 'constant')
-        output = np.concatenate((output, next_output))
-    return padding_decode(output, N)
+
+    cipher = cipher.reshape((-1, ntru.N))
+
+    def decrypt_method(cipher):
+        """ Decrypts the message with the private key f """
+        a_poly = ((f * cipher) % ntru.R).trunc(ntru.q)
+        return ((f_p * a_poly) % ntru.R).trunc(ntru.p)
+
+    output = np.concatenate(([asArr(decrypt_method(asPoly(b)), ntru.N) for b in cipher]))
+    return padding_decode(output, ntru.N)
 
 
 def parseIntoProg(N, q, Lat):
@@ -152,7 +152,7 @@ def genNTRULattice(N, h, p, q):
     for i in range(N):
         arr[i][N:] = np.hstack((h[-i:], h[:-i]))
 
-    arr[:N, N:] *= p_q  # Multiply the top left quadrant by p_q
+    arr[:N, N:] *= p_q  # Multiply the top right quadrant by p_q
     return list(np.ndarray.flatten(arr))
 
 def parseOutput(output):
@@ -241,7 +241,7 @@ def latticeAttack(pubKeyFile, cipher):
 
 
 if __name__ == '__main__':
-    #args = docopt(__doc__, version='NTRU v0.1')
+    args = docopt(__doc__, version='NTRU v0.1')
     #root = logging.getLogger()
     #root.setLevel(logging.DEBUG)
     #ch = logging.StreamHandler(sys.stdout)
@@ -253,7 +253,6 @@ if __name__ == '__main__':
     #    ch.setLevel(logging.WARN)
     #root.addHandler(ch)
 
-    #log.debug(args)
     input_arr, output = None, None
     if not args['gen']:
         if args['FILE'] is None or args['FILE'] == '-':
@@ -265,8 +264,8 @@ if __name__ == '__main__':
         input_arr = np.trim_zeros(input_arr, 'b')
 
     if args['gen']:
-
-        generate_keys(int(args['N']), int(args['P']), int(args['Q']), args['PRIV_KEY_FILE'], args['PUB_KEY_FILE'])
+        NTRU_Par = NTRU(int(args['N']), int(args['P']), int(args['Q']))
+        generate_keys(NTRU_Par, args['PRIV_KEY_FILE'], args['PUB_KEY_FILE'])
     elif args['enc']:
         output = encrypt(args['PUB_KEY_FILE'], input_arr)
     elif args['dec']:
