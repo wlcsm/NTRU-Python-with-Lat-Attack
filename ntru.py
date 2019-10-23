@@ -2,10 +2,10 @@
 """NTRU v0.1
 
 Usage:
-  ntru.py [options] enc PUB_KEY_FILE [FILE]
-  ntru.py [options] dec PRIV_KEY_FILE [FILE]
   ntru.py [options] gen N P Q PRIV_KEY_FILE PUB_KEY_FILE
-  ntru.py [options] att PUB_KEY_FILE [FILE]
+  ntru.py [options] enc PUB_KEY_FILE CIPHERTEXT_FILE FILE
+  ntru.py [options] dec PRIV_KEY_FILE FILE
+  ntru.py [options] att PUB_KEY_FILE FILE
   ntru.py (-h | --help)
   ntru.py --version
 
@@ -74,8 +74,9 @@ def encrypt(pub_key_file, msg):
 
     ciphertext_str = np.concatenate([asArr(enc_poly(asPoly(b)),ntru.N) for b in msg])
 
-    ciphertext_int = [[int(c) for c in np.binary_repr(n, width=int(math.log2(ntru.q)))] for n in ciphertext_str]
-    return np.array(ciphertext_int).flatten()
+    # ciphertext_int = [[int(c) for c in np.binary_repr(n, width=int(math.log2(ntru.q)))] for n in ciphertext_str]
+    # return np.array(ciphertext_int).flatten()
+    return ciphertext_str
 
 
 def load_NTRU(fileName, isPriv):
@@ -96,10 +97,10 @@ def decrypt(priv_key_file, cipher):
 
     ntru, f, f_p = load_NTRU(priv_key_file, isPriv=True)
 
-    k = int(math.log2(ntru.q))
-    pad = 0 if (len(cipher) % k) == 0 else k - (len(cipher) % k)
-    cipher = np.array([int("".join(n.astype(str)), 2) for n in
-                          np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
+   # k = int(math.log2(ntru.q))
+   # pad = 0 if (len(cipher) % k) == 0 else k - (len(cipher) % k)
+   # cipher = np.array([int("".join(n.astype(str)), 2) for n in
+   #                       np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
 
     cipher = cipher.reshape((-1, ntru.N))
 
@@ -242,7 +243,7 @@ if __name__ == '__main__':
     args = docopt(__doc__, version='NTRU v0.1')
     input_arr, output = None, None
 
-    if not args['gen']:
+    if args['enc']:
         if args['FILE'] is None or args['FILE'] == '-':
             input = sys.stdin.read() if poly_input else sys.stdin.buffer.read()
         else:
@@ -255,12 +256,15 @@ if __name__ == '__main__':
         NTRU_Par = NTRU(int(args['N']), int(args['P']), int(args['Q']))
         generate_keys(NTRU_Par, args['PRIV_KEY_FILE'], args['PUB_KEY_FILE'])
     elif args['enc']:
+
         output = encrypt(args['PUB_KEY_FILE'], input_arr)
+        np.savez_compressed(args['CIPHERTEXT_FILE'], cipher=output)
     elif args['dec']:
+        input_arr = np.load(args['FILE'], allow_pickle=True)['cipher'].astype(int)
         output = decrypt(args['PRIV_KEY_FILE'], input_arr)
     elif args['att']:
         output = latticeAttack(args['PUB_KEY_FILE'], input_arr)
 
-    if not args['gen']:
+    if not args['gen'] and not args['enc']:
         sys.stdout.buffer.write(np.packbits(np.array(output).astype(np.int)).tobytes())
 
