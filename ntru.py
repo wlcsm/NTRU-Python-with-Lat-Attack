@@ -59,26 +59,6 @@ def generate_keys(ntru, priv_key_file, pub_key_file):
     np.savez_compressed(pub_key_file, N=N, p=p, q=q, h=h)
 
 
-def encrypt(pub_key_file, msg):
-    """ Encrypt the message using the public key """
-    # Load the NTRU system
-    ntru, h = load_NTRU(pub_key_file, isPriv=False)
-
-    # Pad the message and break up into blocks
-    msg = padding_encode(msg, ntru.N).reshape((-1, ntru.N))
-
-    # Encrypts the message with the public key
-    def enc_poly(msg_poly):
-        e = random_poly(ntru.N, int(math.sqrt(ntru.q)))
-        return (((e * h) + msg_poly) % ntru.R).trunc(ntru.q)
-
-    ciphertext_str = np.concatenate([asArr(enc_poly(asPoly(b)),ntru.N) for b in msg])
-
-    # ciphertext_int = [[int(c) for c in np.binary_repr(n, width=int(math.log2(ntru.q)))] for n in ciphertext_str]
-    # return np.array(ciphertext_int).flatten()
-    return ciphertext_str
-
-
 def load_NTRU(fileName, isPriv):
     """ Loads the NTRU system for the Private and Public domains """
     param_file = np.load(fileName, allow_pickle=True)
@@ -92,25 +72,43 @@ def load_NTRU(fileName, isPriv):
         return ntru, h
 
 
+def encrypt(pub_key_file, msg):
+    """ Encrypt the message using the public key """
+    # Load the NTRU system
+    ntru, h = load_NTRU(pub_key_file, isPriv=False)
+
+    # Pad the message and break up into blocks
+    padding = np.zeros(2*ntru.N - (len(msg) % ntru.N))
+    padding[ntru.N + 1] = 1
+    msg_blocks = np.concatenate((msg, padding)).reshape((-1, ntru.N))
+    #msg_blocks = padding_encode(msg, ntru.N).reshape((-1, ntru.N))
+
+    # Encrypts the message with the public key
+    def enc_poly(msg_poly):
+        e = random_poly(ntru.N, int(math.sqrt(ntru.q)))
+        return (((e * h) + msg_poly) % ntru.R).trunc(ntru.q)
+
+    # Encrypt all the blocks and recombine into one array
+    return np.concatenate([asArr(enc_poly(asPoly(b)),ntru.N) for b in msg_blocks])
+
+
 def decrypt(priv_key_file, cipher):
     """ Decrypts the ciphertext """
 
     ntru, f, f_p = load_NTRU(priv_key_file, isPriv=True)
 
-   # k = int(math.log2(ntru.q))
-   # pad = 0 if (len(cipher) % k) == 0 else k - (len(cipher) % k)
-   # cipher = np.array([int("".join(n.astype(str)), 2) for n in
-   #                       np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
+    # Organise into blocks
+    cipher_blocks = cipher.reshape((-1, ntru.N))
 
-    cipher = cipher.reshape((-1, ntru.N))
-
-    def decrypt_method(cipher):
-        """ Decrypts the message with the private key f """
+    def dec_poly(cipher):
+        """ Decrypts the message with the private key """
         a_poly = ((f * cipher) % ntru.R).trunc(ntru.q)
         return ((f_p * a_poly) % ntru.R).trunc(ntru.p)
 
-    output = np.concatenate(([asArr(decrypt_method(asPoly(b)), ntru.N) for b in cipher]))
-    return padding_decode(output, ntru.N)
+    output = np.concatenate(([asArr(dec_poly(asPoly(b)), ntru.N) for b in cipher_blocks]))
+
+    find_last_zero = lambda n: n if cipher[n] == 0 else find_last_zero(n - 1)
+    return output[:find_last_zero(len(output)-1)]
 
 
 def parseIntoProg(N, q, Lat):
