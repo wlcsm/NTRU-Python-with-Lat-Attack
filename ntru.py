@@ -16,8 +16,10 @@ Options:
   -v, --verbose      Verbose mode.
 
 """
+
 from docopt import docopt
 from mathutils import *
+from ntruPolyOps import *
 from sympy.abc import x
 from sympy import ZZ, Poly
 from padding import *
@@ -31,45 +33,30 @@ from sympy.polys.polyerrors import NotInvertible
 debug = False
 verbose = False
 
-class NTRU:
-
-    def __init__(self, N, p, q):
-        self.N = N
-        self.p = p
-        self.q = q
-        self.R = Poly(x**N - 1, x).set_domain(ZZ)
-
-
-def asPoly(arr):
-    return Poly(arr[::-1],x).set_domain(ZZ)
-
-
-def asArr(poly, N):
-    tmp = poly.all_coeffs()[::-1]
-    return np.pad(tmp, (0, N - len(tmp)))
-
-
 
 def generate_keys(ntru, priv_key_file, pub_key_file):
     """ Generates the public and private keys """
     # Generate the keys and convert them to numpy array form
     N = ntru.N
+    p = ntru.p
+    q = ntru.q
+
     g = random_poly(N, int(math.sqrt(N)))
     for i in range(10):
         f = random_poly(N, N // 3, neg_ones_diff=-1)
         try:
-            f_p = invert_poly(f, ntru.R, ntru.p)
-            f_q = invert_poly(f, ntru.R, ntru.q)
+            f_p = invert_poly(f, ntru.R, p)
+            f_q = invert_poly(f, ntru.R, q)
             break
         except NotInvertible as ex:
             pass
-    h = ((ntru.p * f_q * g) % ntru.R).trunc(ntru.q)
+    h = ((p * f_q * g) % ntru.R).trunc(q)
 
     h, f, f_p, g = asArr(h,N), asArr(f,N), asArr(f_p,N), asArr(g,N)
 
     # Store the results in a file
-    np.savez_compressed(priv_key_file, N=ntru.N, p=ntru.p, q=ntru.q, f=f, f_p=f_p, g=g)
-    np.savez_compressed(pub_key_file, N=ntru.N, p=ntru.p, q=ntru.q, h=h)
+    np.savez_compressed(priv_key_file, N=N, p=p, q=q, f=f, f_p=f_p, g=g)
+    np.savez_compressed(pub_key_file, N=N, p=p, q=q, h=h)
 
 
 def encrypt(pub_key_file, msg):
@@ -79,16 +66,16 @@ def encrypt(pub_key_file, msg):
 
     # Pad the message and break up into blocks
     msg = padding_encode(msg, ntru.N).reshape((-1, ntru.N))
-    def encrypt_method(msg_poly):
-        """ Encrypts the message with the public key """
-        blinding_poly = random_poly(ntru.N, int(math.sqrt(ntru.q)))
-        return (((blinding_poly * h) + msg_poly) % ntru.R).trunc(ntru.q)
-    output = np.concatenate([asArr(encrypt_method(asPoly(b)),ntru.N) for b in msg])
 
-    output = [[0 if c == '0' else 1 for c in np.binary_repr(n,
-                                                            width=int(math.log2(ntru.q)))] for n in output]
-    return np.array(output).flatten()
+    # Encrypts the message with the public key
+    def enc_poly(msg_poly):
+        e = random_poly(ntru.N, int(math.sqrt(ntru.q)))
+        return (((e * h) + msg_poly) % ntru.R).trunc(ntru.q)
 
+    ciphertext_str = np.concatenate([asArr(enc_poly(asPoly(b)),ntru.N) for b in msg])
+
+    ciphertext_int = [[int(c) for c in np.binary_repr(n, width=int(math.log2(ntru.q)))] for n in ciphertext_str]
+    return np.array(ciphertext_int).flatten()
 
 
 def load_NTRU(fileName, isPriv):
@@ -102,6 +89,7 @@ def load_NTRU(fileName, isPriv):
     else: # Public domain, used for encryption
         h = asPoly(param_file['h'].astype(np.int))
         return ntru, h
+
 
 def decrypt(priv_key_file, cipher):
     """ Decrypts the ciphertext """
@@ -137,6 +125,7 @@ def parseIntoProg(N, q, Lat):
     with open("magma_Code.txt", 'w') as fileobj:
         fileobj.write(magProg)
 
+
 def genNTRULattice(N, h, p, q):
     """ Generates the NTRU Lattice """
 
@@ -155,6 +144,7 @@ def genNTRULattice(N, h, p, q):
     arr[:N, N:] *= p_q  # Multiply the top right quadrant by p_q
     return list(np.ndarray.flatten(arr))
 
+
 def parseOutput(output):
     """ Parses the output from Magma and returns a Numpy array with each row
     being one of the reduced basis elements"""
@@ -168,6 +158,7 @@ def parseOutput(output):
         vectors_str = vectors_str[end+1:]
     return np.array([np.array(v.split()[1:-1]).astype(int) for v in
                             vectors_arr])
+
 
 def searchForPrivKey(latBasis, h, N, p, q, cipher):
     """ Searches for the private key in the reduced basis vectors """
@@ -199,19 +190,26 @@ def please_work(cipher, f, f_p, q, p, R, N):
                           np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
     cipher = cipher.reshape((-1, N))
     output = np.array([])
-    for b in cipher:
-        next_output = decrypt_method(asPoly(b), f, f_p, q, p, R).all_coeffs()[::-1]
-        if len(next_output) < N:
-            next_output = np.pad(next_output, (0, N - len(next_output)), 'constant')
-        output = np.concatenate((output, next_output))
+    def decrypt_method(cipher):
+        """ Decrypts the message with the private key f """
+        a_poly = ((f * cipher) % R).trunc(q)
+        return ((f_p * a_poly) % R).trunc(p)
+
+
+    output = np.concatenate(([asArr(decrypt_method(asPoly(b)), N) for b in cipher]))
+
+    #for b in cipher:
+    #    next_output = decrypt_method(asPoly(b), f, f_p, q, p, R).all_coeffs()[::-1]
+    #    if len(next_output) < N:
+    #        next_output = np.pad(next_output, (0, N - len(next_output)), 'constant')
+    #    output = np.concatenate((output, next_output))
     return padding_decode(output, N)
+
 
 def latticeAttack(pubKeyFile, cipher):
     """ Attacks the NTRU system via lattice basis reduction """
     # Read in the public data
-    pub_key = np.load(pubKeyFile, allow_pickle=True)
-    N, p, q = int(pub_key['N']), int(pub_key['p']), int(pub_key['q'])
-    h = pub_key['h'].astype(np.int)
+    ntru, h = load_NTRU(pub_key_file, isPriv=False)
 
     # Generate the lattice
     ntruLat = genNTRULattice(N, h, p, q)
@@ -242,18 +240,8 @@ def latticeAttack(pubKeyFile, cipher):
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='NTRU v0.1')
-    #root = logging.getLogger()
-    #root.setLevel(logging.DEBUG)
-    #ch = logging.StreamHandler(sys.stdout)
-    #if args['--debug']:
-    #    ch.setLevel(logging.DEBUG)
-    #elif args['--verbose']:
-    #    ch.setLevel(logging.INFO)
-    #else:
-    #    ch.setLevel(logging.WARN)
-    #root.addHandler(ch)
-
     input_arr, output = None, None
+
     if not args['gen']:
         if args['FILE'] is None or args['FILE'] == '-':
             input = sys.stdin.read() if poly_input else sys.stdin.buffer.read()
