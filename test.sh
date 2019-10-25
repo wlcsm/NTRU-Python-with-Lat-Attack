@@ -1,6 +1,6 @@
 #!/bin/bash
 # N = 23 works 25 maybe works
-./ntru.py gen 83 3 64 key_priv key_pub
+./ntru.py gen 50 3 32 key_priv key_pub
 echo "Generated keys"
 ./ntru.py enc key_pub.npz ciphertext message.txt
 echo "Encrypted message"

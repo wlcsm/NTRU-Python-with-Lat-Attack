@@ -2,36 +2,22 @@
 """NTRU v0.1
 
 Usage:
-  ntru.py [options] gen N P Q PRIV_KEY_FILE PUB_KEY_FILE
-  ntru.py [options] enc PUB_KEY_FILE CIPHERTEXT_FILE FILE
-  ntru.py [options] dec PRIV_KEY_FILE FILE
-  ntru.py [options] att PUB_KEY_FILE FILE
-  ntru.py (-h | --help)
-  ntru.py --version
-
-Options:
-  -h, --help         Show this screen.
-  --version          Show version.
-  -d, --debug        Debug mode.
-  -v, --verbose      Verbose mode.
-
+  ntru.py gen N P Q PRIV_KEY_FILE PUB_KEY_FILE
+  ntru.py enc PUB_KEY_FILE CIPHERTEXT_FILE FILE
+  ntru.py dec PRIV_KEY_FILE FILE
+  ntru.py att PUB_KEY_FILE FILE
 """
 
 from docopt import docopt
 from mathutils import *
 from ntruPolyOps import *
-from sympy.abc import x
 from sympy import ZZ, Poly
-from padding import *
+from sympy.abc import x
+from sympy.polys.polyerrors import NotInvertible
 import numpy as np
-import logging
 import sys
 import math
 import os
-from sympy.polys.polyerrors import NotInvertible
-
-debug = False
-verbose = False
 
 
 def generate_keys(ntru, priv_key_file, pub_key_file):
@@ -59,29 +45,14 @@ def generate_keys(ntru, priv_key_file, pub_key_file):
     np.savez_compressed(pub_key_file, N=N, p=p, q=q, h=h)
 
 
-def load_NTRU(fileName, isPriv):
-    """ Loads the NTRU system for the Private and Public domains """
-    param_file = np.load(fileName, allow_pickle=True)
-    ntru = NTRU(*[int(param_file[i]) for i in ['N', 'p', 'q']])
-    if isPriv: # Private domain, used for decryption
-        f = asPoly(param_file['f'].astype(np.int))
-        f_p = asPoly(param_file['f_p'].astype(np.int))
-        return ntru, f, f_p
-    else: # Public domain, used for encryption
-        h = asPoly(param_file['h'].astype(np.int))
-        return ntru, h
-
-
 def encrypt(pub_key_file, msg):
     """ Encrypt the message using the public key """
-    # Load the NTRU system
     ntru, h = load_NTRU(pub_key_file, isPriv=False)
 
     # Pad the message and break up into blocks
     padding = np.zeros(2*ntru.N - (len(msg) % ntru.N))
     padding[ntru.N + 1] = 1
     msg_blocks = np.concatenate((msg, padding)).reshape((-1, ntru.N))
-    #msg_blocks = padding_encode(msg, ntru.N).reshape((-1, ntru.N))
 
     # Encrypts the message with the public key
     def enc_poly(msg_poly):
@@ -94,7 +65,6 @@ def encrypt(pub_key_file, msg):
 
 def decrypt(priv_key_file, cipher):
     """ Decrypts the ciphertext """
-
     ntru, f, f_p = load_NTRU(priv_key_file, isPriv=True)
 
     # Organise into blocks
@@ -102,12 +72,12 @@ def decrypt(priv_key_file, cipher):
 
     def dec_poly(cipher):
         """ Decrypts the message with the private key """
-        a_poly = ((f * cipher) % ntru.R).trunc(ntru.q)
-        return ((f_p * a_poly) % ntru.R).trunc(ntru.p)
+        f_m = ((f * cipher) % ntru.R).trunc(ntru.q)
+        return ((f_p * f_m) % ntru.R).trunc(ntru.p)
 
-    output = np.concatenate(([asArr(dec_poly(asPoly(b)), ntru.N) for b in cipher_blocks]))
+    output = np.concatenate([asArr(dec_poly(asPoly(b)), ntru.N) for b in cipher_blocks])
 
-    find_last_zero = lambda n: n if cipher[n] == 0 else find_last_zero(n - 1)
+    find_last_zero = lambda n: n if output[n] == 0 else find_last_zero(n - 1)
     return output[:find_last_zero(len(output)-1)]
 
 
@@ -119,7 +89,8 @@ def parseIntoProg(N, q, Lat):
                f'B := MatrixRing( IntegerRing(), {2*N}) ! {Lat};\n'
                f'print "Unreduced NTRU Lattice";\n'
                f'print "NTRU Lattice after LLL";\n'
-               f'Lattice(B);\n')
+               f'V := Lattice(B);\n'
+               f'LLL(V:Proof:=false, Delta:=0.9999999, Eta:=0.5000001);')
 
     with open("magma_Code.txt", 'w') as fileobj:
         fileobj.write(magProg)
@@ -161,6 +132,7 @@ def parseOutput(output):
 
 def searchForPrivKey(latBasis, h, N, p, q, cipher):
     """ Searches for the private key in the reduced basis vectors """
+    print(max(latBasis[0]))
     R = Poly(x ** N - 1, x).set_domain(ZZ)
     inverse = lambda i: i if (p * i) % q == 1 else inverse(i+1)
     p_q = inverse(2)
@@ -170,7 +142,9 @@ def searchForPrivKey(latBasis, h, N, p, q, cipher):
             attempt = asArr((p_q * (maybe_f * h) % R).trunc(q), N)
             if abs(np.amax(attempt)) <= 1 and abs(np.sum(attempt)) <= 1:
                 try:
-                    Maybe_h, f_p = generate_public_key(maybe_f, asPoly(row[N:]), R, p, q)
+                    f_q = invert_poly(maybe_f, R, q)
+                    f_p = invert_poly(maybe_f, R, p)
+                    h = (p * f_q * asPoly(row[N:]) % R).trunc(q)
                 except NotInvertible:
                     print("Not Invertible")
                     continue
@@ -180,15 +154,12 @@ def searchForPrivKey(latBasis, h, N, p, q, cipher):
                 print(f"\nAttempting to decrypt with potential private key {f_Arr}\n")
                 return please_work(cipher, maybe_f, f_p, q, p, R, N)
                 #sys.stdout.buffer.write(np.packbits(np.array(yeet).astype(np.int)).tobytes())
+    return "Not found"
 
 
 def please_work(cipher, f, f_p, q, p, R, N):
-    k = int(math.log2(q))
-    pad = 0 if (len(cipher) % k) == 0 else k - (len(cipher) % k)
-    cipher = np.array([int("".join(n.astype(str)), 2) for n in
-                          np.pad(np.array(cipher), (0, pad), 'constant').reshape((-1, k))])
     cipher = cipher.reshape((-1, N))
-    output = np.array([])
+
     def decrypt_method(cipher):
         """ Decrypts the message with the private key f """
         a_poly = ((f * cipher) % R).trunc(q)
@@ -197,38 +168,39 @@ def please_work(cipher, f, f_p, q, p, R, N):
 
     output = np.concatenate(([asArr(decrypt_method(asPoly(b)), N) for b in cipher]))
 
-    #for b in cipher:
-    #    next_output = decrypt_method(asPoly(b), f, f_p, q, p, R).all_coeffs()[::-1]
-    #    if len(next_output) < N:
-    #        next_output = np.pad(next_output, (0, N - len(next_output)), 'constant')
-    #    output = np.concatenate((output, next_output))
-    return padding_decode(output, N)
+    find_last_zero = lambda n: n if output[n] == 0 else find_last_zero(n - 1)
+    return output[:find_last_zero(len(output)-1)]
 
 
 def latticeAttack(pubKeyFile, cipher):
     """ Attacks the NTRU system via lattice basis reduction """
     # Read in the public data
-    ntru, h = load_NTRU(pub_key_file, isPriv=False)
+    ntru, h = load_NTRU(pubKeyFile, isPriv=False)
 
     # Generate the lattice
-    ntruLat = genNTRULattice(N, h, p, q)
-    parseIntoProg(N, q, ntruLat)
+    ntruLat = genNTRULattice(ntru.N, asArr(h,ntru.N), ntru.p, ntru.q)
+    parseIntoProg(ntru.N, ntru.q, ntruLat)
 
     # Call magma
     result = os.popen("magma -b < magma_Code.txt")
     bases = parseOutput(result.read())
     result.close()
+    print(bases[0])
+    print([sum([x*x for x in row]) for row in bases])
 
-    decrypted_msg = searchForPrivKey(bases, asPoly(h), N, p, q, cipher)
+    decrypted_msg = searchForPrivKey(bases, h, ntru.N, ntru.p, ntru.q, cipher)
+    if decrypted_mg == "Not Found":
+        return "Not found"
 
-
+    print(f"Yeet {decrypted_msg}")
     priv_key = np.load('key_priv.npz', allow_pickle=True)
     f = priv_key['f'].astype(np.int)
+    print(sum([x*x for x in f]))
     f_p = priv_key['f_p'].astype(np.int)
     g = priv_key['g'].astype(np.int)
-    R = Poly(x ** N - 1, x).set_domain(ZZ)
+    print(sum([x*x for x in g]))
     print("\nProper Decryption\n")
-    msg = please_work(cipher, asPoly(f), asPoly(f_p), q, p, R, N)
+    msg = please_work(cipher, asPoly(f), asPoly(f_p), ntru.q, ntru.p, ntru.R, ntru.N)
     sys.stdout.buffer.write(np.packbits(np.array(msg).astype(np.int)).tobytes())
     #print(f"\nf = {list(f)}")
     #print(f"g = {list(g)}")
@@ -254,13 +226,13 @@ if __name__ == '__main__':
         NTRU_Par = NTRU(int(args['N']), int(args['P']), int(args['Q']))
         generate_keys(NTRU_Par, args['PRIV_KEY_FILE'], args['PUB_KEY_FILE'])
     elif args['enc']:
-
         output = encrypt(args['PUB_KEY_FILE'], input_arr)
         np.savez_compressed(args['CIPHERTEXT_FILE'], cipher=output)
     elif args['dec']:
         input_arr = np.load(args['FILE'], allow_pickle=True)['cipher'].astype(int)
         output = decrypt(args['PRIV_KEY_FILE'], input_arr)
     elif args['att']:
+        input_arr = np.load(args['FILE'], allow_pickle=True)['cipher'].astype(int)
         output = latticeAttack(args['PUB_KEY_FILE'], input_arr)
 
     if not args['gen'] and not args['enc']:
