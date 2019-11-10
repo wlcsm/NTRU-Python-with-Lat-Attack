@@ -132,7 +132,7 @@ def parseOutput(output):
 
 def searchForPrivKey(latBasis, h, N, p, q, cipher):
     """ Searches for the private key in the reduced basis vectors """
-    print(max(latBasis[0]))
+    # print(max(latBasis[0]))
     R = Poly(x ** N - 1, x).set_domain(ZZ)
     inverse = lambda i: i if (p * i) % q == 1 else inverse(i+1)
     p_q = inverse(2)
@@ -148,12 +148,8 @@ def searchForPrivKey(latBasis, h, N, p, q, cipher):
                 except NotInvertible:
                     print("Not Invertible")
                     continue
-                #if Maybe_h == h:
-                print("Attempt to decrypt")
                 f_Arr = asArr(maybe_f, N)
-                print(f"\nAttempting to decrypt with potential private key {f_Arr}\n")
                 return please_work(cipher, maybe_f, f_p, q, p, R, N)
-                #sys.stdout.buffer.write(np.packbits(np.array(yeet).astype(np.int)).tobytes())
     return "Not found"
 
 
@@ -185,24 +181,17 @@ def latticeAttack(pubKeyFile, cipher):
     result = os.popen("magma -b < magma_Code.txt")
     bases = parseOutput(result.read())
     result.close()
-    print(bases[0])
-    print([sum([x*x for x in row]) for row in bases])
+    # print(bases[0])
+    # print([sum([x*x for x in row]) for row in bases])
 
     decrypted_msg = searchForPrivKey(bases, h, ntru.N, ntru.p, ntru.q, cipher)
 
 
-    priv_key = np.load('key_priv.npz', allow_pickle=True)
-    f = priv_key['f'].astype(np.int)
-    f_p = priv_key['f_p'].astype(np.int)
-    g = priv_key['g'].astype(np.int)
-    print(sum([x*x for x in g]))
-    print("\nProper Decryption\n")
-    msg = please_work(cipher, asPoly(f), asPoly(f_p), ntru.q, ntru.p, ntru.R, ntru.N)
-    sys.stdout.buffer.write(np.packbits(np.array(msg).astype(np.int)).tobytes())
-    #print(f"\nf = {list(f)}")
-    #print(f"g = {list(g)}")
-    #print(f"h = {h}")
-    print("\nMy Decryption\n")
+    # priv_key = np.load('key_priv.npz', allow_pickle=True)
+    # f = priv_key['f'].astype(np.int)
+    # f_p = priv_key['f_p'].astype(np.int)
+    # g = priv_key['g'].astype(np.int)
+    # sys.stdout.buffer.write(np.packbits(np.array(msg).astype(np.int)).tobytes())
     return decrypted_msg
 
 
@@ -232,6 +221,14 @@ if __name__ == '__main__':
         input_arr = np.load(args['FILE'], allow_pickle=True)['cipher'].astype(int)
         output = latticeAttack(args['PUB_KEY_FILE'], input_arr)
 
-    if not args['gen'] and not args['enc']:
+    if args['att']:
+        if type(output) == str:
+            print("Decryption was unsuccessful")
+        else:
+            print("========== NTRU Attack Decryption ==========")
+            sys.stdout.buffer.write(np.packbits(np.array(output).astype(np.int)).tobytes())
+            print("============================================")
+    elif args['dec']:
+        print("=========== Standard Decryption ============")
         sys.stdout.buffer.write(np.packbits(np.array(output).astype(np.int)).tobytes())
-
+        print("============================================")
