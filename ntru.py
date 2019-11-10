@@ -189,13 +189,10 @@ def latticeAttack(pubKeyFile, cipher):
     print([sum([x*x for x in row]) for row in bases])
 
     decrypted_msg = searchForPrivKey(bases, h, ntru.N, ntru.p, ntru.q, cipher)
-    if decrypted_mg == "Not Found":
-        return "Not found"
 
-    print(f"Yeet {decrypted_msg}")
+
     priv_key = np.load('key_priv.npz', allow_pickle=True)
     f = priv_key['f'].astype(np.int)
-    print(sum([x*x for x in f]))
     f_p = priv_key['f_p'].astype(np.int)
     g = priv_key['g'].astype(np.int)
     print(sum([x*x for x in g]))
