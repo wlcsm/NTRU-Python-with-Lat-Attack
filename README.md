@@ -10,7 +10,7 @@ Some of the details of this system were taken from https://github.com/jkrauze/nt
 ## Usage
 
 ```
-./ntru.py gen N p q [PRIVATE_KEY_FILE] [PUBLIC_KEY_FILE]
+./ntru.py gen [N] [p] [q] [PRIVATE_KEY_FILE] [PUBLIC_KEY_FILE]
 ./ntru.py enc [PUBLIC_KEY_FILE [CIPHERTEXT] [MESSAGE_FILE]
 ./ntru.py dec [PRIVATE_KEY_FILE] [CIPHERTEXT_FILE]
 ./ntru.py att [PUBLIC_KEY_FILE] [CIPHERTEXT_FILE]
