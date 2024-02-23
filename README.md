@@ -7,7 +7,7 @@ used as anything other than an educational tool.
 
 Some of the details of this system were taken from https://github.com/jkrauze/ntru , such as certain polynomial coercion operations, and parts of the commandline interface. However, the majority of the program is completely different.
 
-## Useage
+## Usage
 
 ```
 ./ntru.py gen N p q [PRIVATE_KEY_FILE] [PUBLIC_KEY_FILE]
