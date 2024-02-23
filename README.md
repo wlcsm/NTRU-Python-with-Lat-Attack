@@ -17,7 +17,7 @@ Some of the details of this system were taken from https://github.com/jkrauze/nt
 ```
 The best explanation of how to use the system is to look at the testing script outlined below.
 
-## Sample useage
+## Sample usage
 
 The bash script "test.sh" generates and encrypts a message contained in the "message.txt" file.
 It then decrypts the ciphertext using the public key, then attacks the cryptosystem with a lattice attack.
